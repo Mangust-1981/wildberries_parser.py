@@ -34,7 +34,7 @@
   tar -xzf geckodriver-v0.34.0-linux64.tar.gz
   sudo mv geckodriver /usr/local/bin/
 - Склонируйте репозиторий или скачайте файл `wildberries_parser.py`:
-  git clone https://github.com/1Mangust1981/wildberries-parser.git
+  git clone https://github.com/Mangust-1981/wildberries-parser.git
 - (Опционально) Настройте прокси:
   Добавьте свои прокси в список `PROXY_LIST_EUROPE_USA` в коде. Рекомендуется использовать платные прокси (например, Smartproxy, Oxylabs) для большей надёжности.
 
