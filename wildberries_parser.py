@@ -1,3 +1,4 @@
+# Импорт необходимых библиотек для работы парсера
 import time
 import os
 import random
@@ -12,30 +13,36 @@ from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 
+# Настройка логирования для записи действий и ошибок в файл
 logging.basicConfig(filename="/home/mangust1981/Документы/3Пайтон/wildberries_parser.log",
                     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Определение таймингов для первой страницы (в секундах)
 FIRST_PAGE_SCROLL_DOWN_PAUSE = 1.3
 FIRST_PAGE_SCROLL_UP_PAUSE = 0.7
 FIRST_PAGE_SCROLL_DOWN_AGAIN_PAUSE = 1.3
 FIRST_PAGE_PAGE_TRANSITION_PAUSE = 2.5
 FIRST_PAGE_PROXY_TEST_PAUSE = 3.0
 
+# Определение таймингов для последующих страниц (блок 2, в секундах)
 SUBSEQUENT_PAGES_BLOCK_2_SCROLL_DOWN_PAUSE = 0.18
 SUBSEQUENT_PAGES_BLOCK_2_SCROLL_UP_PAUSE = 0.13
 SUBSEQUENT_PAGES_BLOCK_2_SCROLL_DOWN_AGAIN_PAUSE = 0.18
 SUBSEQUENT_PAGES_BLOCK_2_PAGE_TRANSITION_PAUSE = 0.23
 
+# Определение таймингов для последующих страниц (блок 3, в секундах)
 SUBSEQUENT_PAGES_BLOCK_3_SCROLL_DOWN_PAUSE = 0.19
 SUBSEQUENT_PAGES_BLOCK_3_SCROLL_UP_PAUSE = 0.14
 SUBSEQUENT_PAGES_BLOCK_3_SCROLL_DOWN_AGAIN_PAUSE = 0.19
 SUBSEQUENT_PAGES_BLOCK_3_PAGE_TRANSITION_PAUSE = 0.24
 
+# Определение таймингов для последующих страниц (блок 4, в секундах)
 SUBSEQUENT_PAGES_BLOCK_4_SCROLL_DOWN_PAUSE = 0.20
 SUBSEQUENT_PAGES_BLOCK_4_SCROLL_UP_PAUSE = 0.15
 SUBSEQUENT_PAGES_BLOCK_4_SCROLL_DOWN_AGAIN_PAUSE = 0.20
 SUBSEQUENT_PAGES_BLOCK_4_PAGE_TRANSITION_PAUSE = 0.25
 
+# Список прокси-серверов для ротации
 PROXY_LIST_EUROPE_USA = [
     "http://31.148.204.183:8080",
     "http://93.91.112.247:41258",
@@ -49,6 +56,7 @@ PROXY_LIST_EUROPE_USA = [
     "http://173.249.40.64:8118",
 ]
 
+# Список User-Agent'ов для имитации разных устройств и браузеров
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15",
@@ -57,16 +65,18 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
 ]
 
+# Константы для работы парсера
 PROXY_ROTATION_INTERVAL = 20
 CLICK_PAGES = sorted(random.sample(range(1, 21), 7))
 SAVE_PATH = "/home/mangust1981/Документы/3Пайтон/wildberries_data.csv"
-MAX_PRODUCTS = 13740
+MAX_PRODUCTS = 3020
 PAUSE_INCREASE_FACTOR = 1.2
 BAD_PROXIES = set()
 USER_AGENT_CYCLE = itertools.cycle(USER_AGENTS)
 SCREEN_RESOLUTIONS = [(1920, 1080), (1366, 768), (1440, 900)]
 start_time = datetime.now()
 
+# Функция для проверки работоспособности прокси
 def test_proxy(driver, proxy_test_pause):
     try:
         driver.get("https://www.google.com")
@@ -77,6 +87,7 @@ def test_proxy(driver, proxy_test_pause):
         logging.error(f"Прокси не работает: {e}")
         return False
 
+# Функция для настройки драйвера Firefox с прокси и User-Agent
 def setup_driver(proxy):
     firefox_options = Options()
     firefox_options.add_argument("--headless")
@@ -96,6 +107,7 @@ def setup_driver(proxy):
         logging.error(f"Ошибка при создания драйвера с прокси {proxy}: {e}")
         return None
 
+# Функция для получения рабочего драйвера с проверкой прокси
 def get_working_driver(proxy_list):
     if not proxy_list:
         print("Список прокси пуст, работаем без прокси")
@@ -120,6 +132,7 @@ def get_working_driver(proxy_list):
     logging.warning(f"Прокси {proxy} не работает, добавлен в список нерабочих")
     return None
 
+# Функция для имитации движения мыши по странице
 def simulate_mouse_movement(driver):
     try:
         driver.execute_script("window.scrollTo(0, 0);")
@@ -132,6 +145,7 @@ def simulate_mouse_movement(driver):
     except Exception as e:
         logging.error(f"Ошибка при имитации движения мыши: {e}")
 
+# Функция для случайного клика по товару с возвратом назад
 def simulate_random_click(driver, items):
     try:
         if not items:
@@ -149,6 +163,7 @@ def simulate_random_click(driver, items):
     except Exception as e:
         logging.error(f"Ошибка при выполнении случайного клика: {e}")
 
+# Функция для случайной прокрутки страницы
 def simulate_random_scrolls(driver):
     try:
         page_height = driver.execute_script("return document.body.scrollHeight")
@@ -162,6 +177,7 @@ def simulate_random_scrolls(driver):
     except Exception as e:
         logging.error(f"Ошибка при выполнении случайных скроллов: {e}")
 
+# Функция для случайного клика по категории или поиску
 def simulate_random_category_or_search_click(driver):
     try:
         actions = [("category", "menu-burger__link"), ("search", "search__input")]
@@ -184,6 +200,7 @@ def simulate_random_category_or_search_click(driver):
     except Exception as e:
         logging.error(f"Ошибка при выполнении случайного клика по категории/поиску: {e}")
 
+# Функция для случайного перехода в другую категорию
 def simulate_category_wandering(driver):
     try:
         driver.get("https://www.wildberries.ru/catalog/zhenshchinam/odezhda/platya")
@@ -194,6 +211,7 @@ def simulate_category_wandering(driver):
     except Exception as e:
         logging.error(f"Ошибка при переходе в другую категорию: {e}")
 
+# Функция для выполнения "хитростей" после ротации прокси
 def perform_tricks_after_rotation(driver, page_number, category_url):
     logging.info(f"Выполняем 'хитрости' после ротации прокси на странице {page_number}")
     driver.delete_all_cookies()
@@ -220,6 +238,7 @@ def perform_tricks_after_rotation(driver, page_number, category_url):
     time.sleep(delay)
     logging.info(f"Случайная задержка после ротации: {delay:.2f} секунд")
 
+# Функция для проверки наличия CAPTCHA на странице
 def check_for_captcha(driver):
     try:
         driver.find_element(By.CLASS_NAME, "captcha__container")
@@ -229,6 +248,7 @@ def check_for_captcha(driver):
         logging.info("CAPTCHA не обнаружена")
         return False
 
+# Функция для обработки CAPTCHA
 def handle_captcha(driver, page_number, category_url):
     logging.info(f"Обработка CAPTCHA на странице {page_number}")
     pause = random.uniform(5, 10)
@@ -240,6 +260,7 @@ def handle_captcha(driver, page_number, category_url):
     logging.info("Драйвер перезапущен с новым User-Agent для обхода CAPTCHA")
     return driver
 
+# Функция для ротации прокси
 def rotate_proxy(driver, page_number, category_url, max_attempts=3):
     driver.quit()
     logging.info(f"Ротация прокси на странице {page_number}")
@@ -254,6 +275,7 @@ def rotate_proxy(driver, page_number, category_url, max_attempts=3):
     logging.error(f"Не удалось найти рабочий прокси после {max_attempts} попыток, завершаем работу")
     raise Exception("Не удалось найти рабочий прокси после максимального количества попыток")
 
+# Функции для очистки данных (цены, названия, рейтинга, скидки)
 def clean_price(price_text):
     cleaned = ''.join(filter(str.isdigit, price_text))
     return cleaned if cleaned else "0"
@@ -269,6 +291,7 @@ def clean_discount(discount_text):
     cleaned = ''.join(filter(str.isdigit, discount_text))
     return cleaned if cleaned else "0"
 
+# Основная функция парсинга Wildberries
 def parse_wildberries(category_url):
     driver = None
     attempts = 0
@@ -541,13 +564,15 @@ def parse_wildberries(category_url):
     logging.info("Парсинг завершен")
     return all_products
 
+# Функция для сохранения данных в CSV-файл
 def save_to_csv(data, filename=SAVE_PATH):
     df = pd.DataFrame(data)
     df.to_csv(filename, index=False, encoding="utf-8-sig", sep=";")
     logging.info(f"Данные сохранены в {filename}")
     print(f"Данные сохранены в {filename}")
 
+# Запуск парсинга
 if __name__ == "__main__":
-    url = "https://www.wildberries.ru/catalog/zhenshchinam/odezhda/yubki?sort=popular&page=1&f57021=94964"
+    url = "https://www.wildberries.ru/catalog/zhenshchinam/odezhda/yubki?sort=popular&page=1&f57021=64272"
     products = parse_wildberries(url)
     save_to_csv(products)
