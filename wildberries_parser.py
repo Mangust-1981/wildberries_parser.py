@@ -12,12 +12,23 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, \
-    WebDriverException
+from selenium.common.exceptions import (
+    TimeoutException,
+    NoSuchElementException,
+    WebDriverException,
+    ElementClickInterceptedException,
+)
+from urllib3.exceptions import NewConnectionError
 
-# Настройка логирования для записи действий и ошибок
-logging.basicConfig(filename="/home/mangust1981/Документы/3Пайтон/wildberries_parser.log",
-                    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Настройка логирования для записи действий только в файл
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("/home/mangust1981/Документы/3Пайтон/wildberries_parser.log"),
+        # logging.StreamHandler() убран, чтобы логи не шли в терминал
+    ],
+)
 
 # Блок 2: Определение таймингов для парсинга
 # Тайминги для первой страницы (в секундах)
@@ -61,9 +72,10 @@ USER_AGENTS = [
 
 # Константы для работы парсера
 PROXY_ROTATION_INTERVAL = 20
+DRIVER_RESTART_INTERVAL = 20  # Перезапуск драйвера каждые 20 страниц
 CLICK_PAGES = sorted(random.sample(range(1, 21), 7))
 SAVE_PATH = "/home/mangust1981/Документы/3Пайтон/wildberries_data.csv"
-MAX_PRODUCTS = 13740
+MAX_PRODUCTS = 10540  # Обновлено количество товаров
 PAUSE_INCREASE_FACTOR = 1.2
 BAD_PROXIES = set()
 USER_AGENT_CYCLE = itertools.cycle(USER_AGENTS)
@@ -76,7 +88,7 @@ SITE_EXIT_DURATION = 90  # Пауза 1.5 минуты (90 секунд)
 IDLE_INTERVAL = 7  # Зависание каждые 7 страниц
 IDLE_DURATION = 30  # Пауза 30 секунд
 DUPLICATE_PAGE_THRESHOLD = 2  # Количество подряд идущих страниц с дубликатами
-DUPLICATE_EXIT_DURATION = 120  # Пауза 2 минуты (120 секунд) при дубликатах
+DUPLICATE_EXIT_DURATION = 180  # Пауза 3 минуты (180 секунд) при дубликатах
 
 # Блок 4: Функции для сбора и проверки прокси
 # Функция для сбора прокси с онлайн-ресурсов
@@ -249,14 +261,52 @@ def simulate_category_wandering(driver):
     except Exception as e:
         logging.error(f"Ошибка при переходе в категорию: {e}")
 
-# Новая функция: Уход с сайта на 1.5 минуты каждые 15 страниц
-def simulate_site_exit(driver, page_number, category_url):
-    logging.info(f"Имитация ухода с сайта на странице {page_number} (каждые 15 страниц)")
+# Применение случайного фильтра (например, сортировка по цене)
+def apply_random_filter(driver, category_url, page_number):
     try:
+        # Переходим на страницу с сортировкой по цене (по возрастанию)
+        sort_url = category_url + f"&page={page_number}&sort=priceup"
+        driver.get(sort_url)
+        logging.info(f"Применён фильтр: сортировка по цене (по возрастанию) на странице {page_number}")
+        time.sleep(random.uniform(3, 6))
+        # Возвращаемся на исходную страницу
+        driver.get(category_url + f"&page={page_number}")
+        WebDriverWait(driver, 15).until(EC.presence_of_all_elements_located(\
+            (By.CLASS_NAME, "product-card__wrapper")))
+    except Exception as e:
+        logging.error(f"Ошибка при применении фильтра: {e}")
+
+# Функция: Закрытие баннера с куки
+def close_cookies_banner(driver):
+    try:
+        cookies_banner = driver.find_element(By.CLASS_NAME, "cookies")
+        accept_button = cookies_banner.find_element(By.XPATH, ".//button[contains(text(), 'Принять')]")
+        driver.execute_script("arguments[0].scrollIntoView(true);", accept_button)
+        accept_button.click()
+        logging.info("Баннер с куки закрыт")
+        time.sleep(random.uniform(1, 2))  # Даём время на закрытие баннера
+    except NoSuchElementException:
+        logging.info("Баннер с куки не найден")
+    except Exception as e:
+        logging.error(f"Ошибка при закрытии баннера с куки: {e}")
+
+# Функция: Уход с сайта на 1.5 минуты каждые 15 страниц
+def simulate_site_exit(driver, page_number, category_url, all_products):
+    logging.info(f"Имитация ухода с сайта на странице {page_number} (каждые 15 страниц)")
+    # Сохраняем данные перед уходом
+    save_to_csv(all_products)
+    logging.info(f"Данные сохранены перед уходом с сайта на странице {page_number}")
+    try:
+        # Очищаем куки и кеш
+        driver.delete_all_cookies()
+        driver.execute_script("window.localStorage.clear();")
+        driver.execute_script("window.sessionStorage.clear();")
+        logging.info("Куки и кеш очищены перед уходом")
+
         # Переходим на Google
         driver.get("https://www.google.com")
         logging.info("Перешли на Google для имитации ухода")
-        
+
         # Делаем простой поисковый запрос
         search_box = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "q"))
@@ -265,11 +315,11 @@ def simulate_site_exit(driver, page_number, category_url):
         search_box.send_keys(search_query)
         search_box.submit()
         logging.info(f"Выполнен поиск в Google: '{search_query}'")
-        
+
         # Ждём 1.5 минуты (90 секунд)
         time.sleep(SITE_EXIT_DURATION)
         logging.info(f"Пауза {SITE_EXIT_DURATION} секунд завершена")
-        
+
         # Возвращаемся на Wildberries
         driver.get(category_url + f"&page={page_number}")
         logging.info(f"Вернулись на страницу {page_number} Wildberries")
@@ -281,14 +331,23 @@ def simulate_site_exit(driver, page_number, category_url):
         driver.get(category_url + f"&page={page_number}")
         logging.info(f"Принудительно вернулись на страницу {page_number} Wildberries")
 
-# Новая функция: Уход с сайта при дубликатах на 2 минуты с ротацией прокси
-def simulate_duplicate_exit(driver, page_number, category_url):
+# Функция: Уход с сайта при дубликатах на 3 минуты с ротацией прокси
+def simulate_duplicate_exit(driver, page_number, category_url, all_products):
     logging.info(f"Имитация ухода с сайта на странице {page_number} из-за дубликатов")
+    # Сохраняем данные перед уходом
+    save_to_csv(all_products)
+    logging.info(f"Данные сохранены перед уходом с сайта на странице {page_number}")
     try:
+        # Очищаем куки и кеш
+        driver.delete_all_cookies()
+        driver.execute_script("window.localStorage.clear();")
+        driver.execute_script("window.sessionStorage.clear();")
+        logging.info("Куки и кеш очищены перед уходом")
+
         # Переходим на Google
         driver.get("https://www.google.com")
         logging.info("Перешли на Google из-за дубликатов")
-        
+
         # Делаем простой поисковый запрос
         search_box = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "q"))
@@ -297,26 +356,30 @@ def simulate_duplicate_exit(driver, page_number, category_url):
         search_box.send_keys(search_query)
         search_box.submit()
         logging.info(f"Выполнен поиск в Google: '{search_query}'")
-        
-        # Ждём 2 минуты (120 секунд)
+
+        # Ждём 3 минуты (180 секунд)
         time.sleep(DUPLICATE_EXIT_DURATION)
         logging.info(f"Пауза {DUPLICATE_EXIT_DURATION} секунд завершена")
-        
+
         # Ротация прокси
         driver = rotate_proxy(driver, page_number, category_url)
-        
+
         # Возвращаемся на Wildberries
         driver.get(category_url + f"&page={page_number}")
         logging.info(f"Вернулись на страницу {page_number} Wildberries после ротации прокси")
         WebDriverWait(driver, 15).until(
             EC.presence_of_all_elements_located((By.CLASS_NAME, "product-card__wrapper"))
         )
+
+        # Дополнительные "человечные" действия
+        simulate_category_wandering(driver)
+        apply_random_filter(driver, category_url, page_number)
     except Exception as e:
         logging.error(f"Ошибка при имитации ухода из-за дубликатов: {e}")
         driver.get(category_url + f"&page={page_number}")
         logging.info(f"Принудительно вернулись на страницу {page_number} Wildberries")
 
-# Новая функция: Имитация зависания на 30 секунд каждые 7 страниц
+# Функция: Имитация зависания на 30 секунд каждые 7 страниц
 def simulate_idle(page_number):
     logging.info(f"Имитация зависания на странице {page_number} на {IDLE_DURATION} секунд")
     time.sleep(IDLE_DURATION)
@@ -391,7 +454,10 @@ def handle_captcha(driver, page_number, category_url):
 
 # Ротация прокси
 def rotate_proxy(driver, page_number, category_url, max_attempts=5):
-    driver.quit()
+    try:
+        driver.quit()
+    except Exception as e:
+        logging.error(f"Ошибка при закрытии драйвера во время ротации: {e}")
     logging.info(f"Ротация прокси на странице {page_number}")
     time.sleep(random.uniform(5, 10))
     attempts = 0
@@ -405,20 +471,37 @@ def rotate_proxy(driver, page_number, category_url, max_attempts=5):
     logging.error(f"Не удалось найти прокси после {max_attempts} попыток")
     raise Exception("Не удалось найти прокси после максимального количества попыток")
 
+# Перезапуск драйвера
+def restart_driver(driver, page_number, category_url):
+    logging.info(f"Перезапуск драйвера на странице {page_number}")
+    try:
+        driver.quit()
+    except Exception as e:
+        logging.error(f"Ошибка при закрытии драйвера во время перезапуска: {e}")
+    time.sleep(random.uniform(5, 10))
+    new_driver = get_working_driver(PROXY_LIST)
+    if new_driver:
+        perform_tricks_after_rotation(new_driver, page_number, category_url)
+        return new_driver
+    logging.error("Не удалось перезапустить драйвер")
+    raise Exception("Не удалось перезапустить драйвер")
+
 # Блок 8: Функции для очистки данных
+# Очистка цены
 def clean_price(price_text):
     cleaned = ''.join(filter(str.isdigit, price_text))
     return cleaned if cleaned else "0"
 
+# Очистка названия
 def clean_name(name_text):
     return name_text.replace("/", "").strip()
 
+# Очистка рейтинга
 def clean_rating(rating_text):
-    cleaned = ''.join(c for c in rating_text if c.isdigit() or c == '.')
-    return cleaned if cleaned else "0"
-
-def clean_discount(discount_text):
-    cleaned = ''.join(filter(str.isdigit, discount_text))
+    # Удаляем всё, кроме цифр, точки и запятой
+    cleaned = ''.join(c for c in rating_text if c.isdigit() or c in [',', '.'])
+    # Заменяем запятую на точку
+    cleaned = cleaned.replace(',', '.')
     return cleaned if cleaned else "0"
 
 # Блок 9: Основная функция парсинга
@@ -443,6 +526,8 @@ def parse_wildberries(category_url):
                 return []
             driver.get(category_url)
             logging.info(f"Открыта страница: {category_url}")
+            # Закрываем баннер с куки при первом входе
+            close_cookies_banner(driver)
             break
         except (TimeoutException, WebDriverException) as e:
             logging.error(f"Ошибка загрузки страницы: {e}")
@@ -460,6 +545,9 @@ def parse_wildberries(category_url):
     max_retries = 5
     max_rotation_cycles = 5
     while True:
+        # Засекаем время начала обработки страницы
+        page_start_time = datetime.now()
+
         # Очистка unique_product_links каждые 50 страниц
         if page_number % 50 == 0 and page_number > 1:
             unique_product_links.clear()
@@ -467,15 +555,21 @@ def parse_wildberries(category_url):
 
         # Уход с сайта каждые 15 страниц
         if page_number % SITE_EXIT_INTERVAL == 0 and page_number > 1:
-            simulate_site_exit(driver, page_number, category_url.split("&page=")[0])
+            simulate_site_exit(driver, page_number, category_url.split("&page=")[0], all_products)
 
         # Имитация зависания каждые 7 страниц
         if page_number % IDLE_INTERVAL == 0 and page_number > 1:
             simulate_idle(page_number)
 
+        # Ротация прокси каждые 20 страниц
         if page_number > 1 and (page_number - 1) % PROXY_ROTATION_INTERVAL == 0:
             driver = rotate_proxy(driver, page_number, category_url.split("&page=")[0])
             logging.info(f"Переоткрыта страница {page_number} после ротации")
+
+        # Перезапуск драйвера каждые 20 страниц
+        if page_number > 1 and (page_number - 1) % DRIVER_RESTART_INTERVAL == 0:
+            driver = restart_driver(driver, page_number, category_url.split("&page=")[0])
+            logging.info(f"Драйвер перезапущен на странице {page_number}")
 
         # Установка таймингов в зависимости от страницы
         if page_number == 1 or (page_number - 1) % PROXY_ROTATION_INTERVAL == 0:
@@ -524,15 +618,37 @@ def parse_wildberries(category_url):
                 driver = handle_captcha(driver, page_number, category_url)
                 driver.get(category_url + f"&page={page_number}")
                 logging.info(f"Переоткрыта страница {page_number} после CAPTCHA")
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            try:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            except (WebDriverException, NewConnectionError) as e:
+                logging.error(f"Ошибка при прокрутке страницы {page_number}: {e}")
+                # Перезапускаем драйвер
+                driver = restart_driver(driver, page_number, category_url.split("&page=")[0])
+                driver.get(category_url + f"&page={page_number}")
+                logging.info(f"Переоткрыта страница {page_number} после перезапуска драйвера")
+                continue
             current_scroll_down_pause = scroll_down_pause * \
                 (PAUSE_INCREASE_FACTOR ** scroll_attempts)
             time.sleep(current_scroll_down_pause)
-            driver.execute_script("window.scrollTo(0, 0);")
+            try:
+                driver.execute_script("window.scrollTo(0, 0);")
+            except (WebDriverException, NewConnectionError) as e:
+                logging.error(f"Ошибка при прокрутке страницы {page_number}: {e}")
+                driver = restart_driver(driver, page_number, category_url.split("&page=")[0])
+                driver.get(category_url + f"&page={page_number}")
+                logging.info(f"Переоткрыта страница {page_number} после перезапуска драйвера")
+                continue
             current_scroll_up_pause = scroll_up_pause * \
                 (PAUSE_INCREASE_FACTOR ** scroll_attempts)
             time.sleep(current_scroll_up_pause)
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            try:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            except (WebDriverException, NewConnectionError) as e:
+                logging.error(f"Ошибка при прокрутке страницы {page_number}: {e}")
+                driver = restart_driver(driver, page_number, category_url.split("&page=")[0])
+                driver.get(category_url + f"&page={page_number}")
+                logging.info(f"Переоткрыта страница {page_number} после перезапуска драйвера")
+                continue
             current_scroll_down_again_pause = scroll_down_again_pause * \
                 (PAUSE_INCREASE_FACTOR ** scroll_attempts)
             time.sleep(current_scroll_down_again_pause)
@@ -584,7 +700,14 @@ def parse_wildberries(category_url):
                     driver = handle_captcha(driver, page_number, category_url)
                     driver.get(category_url + f"&page={page_number}")
                     logging.info(f"Переоткрыта страница {page_number} после CAPTCHA")
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                try:
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                except (WebDriverException, NewConnectionError) as e:
+                    logging.error(f"Ошибка при прокрутке страницы {page_number}: {e}")
+                    driver = restart_driver(driver, page_number, category_url.split("&page=")[0])
+                    driver.get(category_url + f"&page={page_number}")
+                    logging.info(f"Переоткрыта страница {page_number} после перезапуска драйвера")
+                    continue
                 time.sleep(FIRST_PAGE_SCROLL_DOWN_PAUSE)
                 driver.execute_script("window.scrollTo(0, 0);")
                 time.sleep(FIRST_PAGE_SCROLL_UP_PAUSE)
@@ -674,14 +797,9 @@ def parse_wildberries(category_url):
                 cleaned_name = clean_name(name)
                 price = item.find_element(By.CLASS_NAME, "price__lower-price").text.strip()
                 cleaned_price = clean_price(price)
+                # Извлечение рейтинга
                 try:
-                    discount = item.find_element(By.CLASS_NAME, "discount").text.strip()
-                    cleaned_discount = clean_discount(discount)
-                except:
-                    cleaned_discount = "0"
-                try:
-                    rating = item.find_element(By.CLASS_NAME, "product-card__rating").\
-                        text.strip()
+                    rating = item.find_element(By.CLASS_NAME, "address-rate-mini").text.strip()
                     cleaned_rating = clean_rating(rating)
                 except:
                     cleaned_rating = "0"
@@ -696,14 +814,15 @@ def parse_wildberries(category_url):
                     continue
                 unique_product_links.add(link)
                 logging.info(f"Добавлена новая ссылка: {link}")
+                # Добавляем товар в список (без address и discount)
                 all_products.append({
                     "Название": cleaned_name,
                     "Цена": cleaned_price,
-                    "Скидка (%)": cleaned_discount,
                     "Рейтинг": cleaned_rating,
                     "Ссылка": link
                 })
-                logging.info(f"Спарсен товар: {cleaned_name}, Цена: {cleaned_price}")
+                logging.info(f"Спарсен товар: {cleaned_name}, Цена: {cleaned_price}, \
+                    Рейтинг: {cleaned_rating}")
             except Exception as e:
                 logging.error(f"Ошибка при парсинге товара: {e}")
                 continue
@@ -720,78 +839,143 @@ def parse_wildberries(category_url):
 
         # Если 2 страницы подряд содержат только дубликаты
         if consecutive_duplicate_pages >= DUPLICATE_PAGE_THRESHOLD:
-            simulate_duplicate_exit(driver, page_number, category_url.split("&page=")[0])
+            simulate_duplicate_exit(driver, page_number, category_url.split("&page=")[0], all_products)
             consecutive_duplicate_pages = 0  # Сбрасываем счётчик после ухода
 
-        # Логирование дубликатов
-        logging.info(f"Страница {page_number}: пропущено дубликатов: {duplicates_count}")
-        print(f"Страница {page_number}: пропущено дубликатов: {duplicates_count}")
+        # Вычисляем время, потраченное на страницу и общее время
+        page_end_time = datetime.now()
+        page_duration = (page_end_time - page_start_time).total_seconds()
+        total_duration = (page_end_time - start_time).total_seconds()
 
-        # Логирование общего количества товаров
-        logging.info(f"Всего собрано товаров: {len(all_products)}")
+        # Итоговая информация по странице
+        print(f"--- Итог страницы {page_number} ---")
+        print(f"Пропущено дубликатов: {duplicates_count}")
         print(f"Всего собрано товаров: {len(all_products)}")
+        print(f"Время на страницу: {page_duration:.2f} сек")
+        print(f"Общее время парсинга: {total_duration:.2f} сек")
+        print(f"-------------------------")
 
         # Сохранение данных
         if page_number % 10 == 0:
             save_to_csv(all_products)
             logging.info(f"Промежуточное сохранение на странице {page_number}")
+            print(f"Промежуточное сохранение на странице {page_number}")
 
         # Переход на следующую страницу
-        pagination_retries = 7
+        pagination_retries = 10
         pagination_class_found = False
         for attempt in range(pagination_retries):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            try:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            except (WebDriverException, NewConnectionError) as e:
+                logging.error(f"Ошибка при прокрутке страницы {page_number}: {e}")
+                driver = restart_driver(driver, page_number, category_url.split("&page=")[0])
+                driver.get(category_url + f"&page={page_number}")
+                logging.info(f"Переоткрыта страница {page_number} после перезапуска драйвера")
+                continue
             time.sleep(page_transition_pause)
             if check_for_captcha(driver):
                 driver = handle_captcha(driver, page_number, category_url)
                 driver.get(category_url + f"&page={page_number}")
                 logging.info(f"Переоткрыта страница {page_number} после CAPTCHA")
+            # Закрываем баннер с куки перед попыткой клика
+            close_cookies_banner(driver)
             try:
-                next_button = WebDriverWait(driver, 15).until(\
-                    EC.presence_of_element_located((By.CLASS_NAME, "pagination-next")))
+                # Ищем кнопку пагинации по классу
+                next_button = WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, "pagination-next"))
+                )
                 pagination_class_found = True
                 if "disabled" in next_button.get_attribute("class"):
                     logging.info("Кнопка 'Следующая страница' неактивна")
                     driver.quit()
                     save_to_csv(all_products)
                     return all_products
+                # Прокручиваем к кнопке, чтобы она была в зоне видимости
+                driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                time.sleep(random.uniform(0.5, 1))  # Даём время на прокрутку
+                # Пытаемся скрыть перекрывающий элемент
+                try:
+                    driver.execute_script("document.querySelector('.dropdown-filter__btn-name').style.display = 'none';")
+                    logging.info("Перекрывающий элемент dropdown-filter__btn-name скрыт")
+                except:
+                    logging.info("Перекрывающий элемент dropdown-filter__btn-name не найден")
+                # Проверяем, кликабельна ли кнопка
+                WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, "pagination-next")))
                 next_button.click()
+                logging.info(f"Успешно кликнули на кнопку пагинации (pagination-next) на странице {page_number}")
                 current_page_transition_pause = page_transition_pause * \
                     (PAUSE_INCREASE_FACTOR ** attempt)
                 time.sleep(current_page_transition_pause + random.uniform(1, 3))
                 page_number += 1
                 break
-            except Exception as e:
-                logging.warning(f"Не удалось найти кнопку пагинации по классу на странице \
-                    {page_number}, попытка {attempt + 1}/{pagination_retries}: {e}")
+            except (TimeoutException, ElementClickInterceptedException) as e:
+                logging.warning(f"Не удалось найти или кликнуть на кнопку пагинации по классу на странице "
+                                f"{page_number}, попытка {attempt + 1}/{pagination_retries}: {e}")
                 try:
-                    next_button = WebDriverWait(driver, 5).until(\
-                        EC.element_to_be_clickable(\
-                        (By.XPATH, "//a[contains(text(), 'Далее')]")))
-                    logging.info("Кнопка пагинации найдена по тексту 'Далее'")
+                    # Пробуем найти кнопку по символу стрелки (→)
+                    next_button = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, "//a[contains(@class, 'pagination-next') and contains(text(), '→')]"))
+                    )
+                    logging.info("Кнопка пагинации найдена по символу '→'")
                     if "disabled" in next_button.get_attribute("class"):
-                        logging.info("Кнопка 'Далее' неактивна")
+                        logging.info("Кнопка '→' неактивна")
                         driver.quit()
                         save_to_csv(all_products)
                         return all_products
+                    # Прокручиваем к кнопке
+                    driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                    time.sleep(random.uniform(0.5, 1))
                     next_button.click()
+                    logging.info(f"Успешно кликнули на кнопку пагинации (по символу '→') на странице {page_number}")
                     current_page_transition_pause = page_transition_pause * \
                         (PAUSE_INCREASE_FACTOR ** attempt)
                     time.sleep(current_page_transition_pause + random.uniform(1, 3))
                     page_number += 1
                     break
                 except Exception as e_alt:
-                    logging.warning(f"Не удалось найти кнопку пагинации по тексту на странице \
-                        {page_number}, попытка {attempt + 1}/{pagination_retries}: {e_alt}")
-                    if attempt == pagination_retries - 1:
-                        logging.info(f"Пагинация не найдена после {pagination_retries} попыток")
-                        driver.quit()
-                        save_to_csv(all_products)
-                        return all_products
-                    current_page_transition_pause = page_transition_pause * \
-                        (PAUSE_INCREASE_FACTOR ** attempt)
-                    driver.refresh()
-                    time.sleep(current_page_transition_pause)
+                    logging.warning(f"Не удалось найти кнопку пагинации по символу '→' на странице "
+                                    f"{page_number}, попытка {attempt + 1}/{pagination_retries}: {e_alt}")
+                    # Пробуем перейти через кнопку с номером страницы
+                    try:
+                        next_page_number = page_number + 1
+                        page_button = WebDriverWait(driver, 5).until(
+                            EC.element_to_be_clickable((By.XPATH, f"//a[@class='pagination-item pagination__item j-page' and text()='{next_page_number}']"))
+                        )
+                        driver.execute_script("arguments[0].scrollIntoView(true);", page_button)
+                        time.sleep(random.uniform(0.5, 1))
+                        page_button.click()
+                        logging.info(f"Успешно кликнули на кнопку с номером страницы {next_page_number}")
+                        current_page_transition_pause = page_transition_pause * \
+                            (PAUSE_INCREASE_FACTOR ** attempt)
+                        time.sleep(current_page_transition_pause + random.uniform(1, 3))
+                        page_number += 1
+                        break
+                    except Exception as e_page:
+                        logging.warning(f"Не удалось найти кнопку с номером страницы {next_page_number}, попытка {attempt + 1}/{pagination_retries}: {e_page}")
+                        # Последняя попытка: извлекаем href и переходим напрямую
+                        try:
+                            next_button = driver.find_element(By.CLASS_NAME, "pagination-next")
+                            next_page_url = next_button.get_attribute("href")
+                            if next_page_url:
+                                driver.get(next_page_url)
+                                logging.info(f"Перешли на страницу {page_number + 1} через прямой URL: {next_page_url}")
+                                current_page_transition_pause = page_transition_pause * \
+                                    (PAUSE_INCREASE_FACTOR ** attempt)
+                                time.sleep(current_page_transition_pause + random.uniform(1, 3))
+                                page_number += 1
+                                break
+                        except Exception as e_href:
+                            logging.warning(f"Не удалось извлечь href кнопки пагинации на странице {page_number}, попытка {attempt + 1}/{pagination_retries}: {e_href}")
+                            if attempt == pagination_retries - 1:
+                                logging.info(f"Пагинация не найдена после {pagination_retries} попыток")
+                                driver.quit()
+                                save_to_csv(all_products)
+                                return all_products
+                            current_page_transition_pause = page_transition_pause * \
+                                (PAUSE_INCREASE_FACTOR ** attempt)
+                            driver.refresh()
+                            time.sleep(current_page_transition_pause)
         if not pagination_class_found:
             logging.warning(f"Класс pagination-next не найден на странице {page_number}")
 
@@ -808,13 +992,18 @@ def parse_wildberries(category_url):
 # Блок 10: Сохранение данных в CSV
 def save_to_csv(data, filename=SAVE_PATH):
     df = pd.DataFrame(data)
+    # Удаляем ненужные столбцы (address и discount)
+    columns_to_keep = ["Название", "Цена", "Рейтинг", "Ссылка"]
+    df = df[columns_to_keep]
+    # Оборачиваем значения рейтинга в кавычки, чтобы запятая не воспринималась как разделитель
+    if 'Рейтинг' in df.columns:
+        df['Рейтинг'] = df['Рейтинг'].apply(lambda x: f'"{x}"')
     df.to_csv(filename, index=False, encoding="utf-8-sig", sep=";")
     logging.info(f"Данные сохранены в {filename}")
     print(f"Данные сохранены в {filename}")
 
 # Блок 11: Запуск парсинга
 if __name__ == "__main__":
-    url = "https://www.wildberries.ru/catalog/zhenshchinam/odezhda/yubki?sort=popular\
-        &page=1&f57021=94964"
+    url = "https://www.wildberries.ru/catalog/0/search.aspx?page=1&sort=popular&search=%D1%8E%D0%B1%D0%BA%D0%B0+%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B0%D1%8F&f57021=64270"
     products = parse_wildberries(url)
     save_to_csv(products)
